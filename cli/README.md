@@ -54,6 +54,32 @@ conduit start --psiphon-config ./psiphon_config.json -vv
 | `--data-dir, -d` | `./data` | Directory for keys and state |
 | `-v` | - | Verbose output (use `-vv` for debug) |
 
+## Multi-Instance Mode
+
+For VPS and server deployments, you can run multiple instances in parallel to maximize throughput. Each instance gets its own cryptographic key and reputation with the Psiphon broker.
+
+```bash
+# Run 4 instances in parallel
+conduit run-multi --instances 4 --psiphon-config ./psiphon_config.json
+
+# Customize per-instance limits
+conduit run-multi -n 8 -c ./psiphon_config.json --max-clients 100 --bandwidth 20
+
+# With stats files for monitoring
+conduit run-multi -n 4 -c ./psiphon_config.json --stats-file stats.json -v
+```
+
+### Multi-Instance Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--instances, -n` | 2 | Number of parallel instances (1-32) |
+| `--max-clients, -m` | 50 | Maximum clients per instance |
+| `--bandwidth, -b` | 40 | Bandwidth limit per instance in Mbps |
+| `--stats-file, -s` | - | Stats file pattern (creates instance-0-stats.json, etc.) |
+
+Each instance creates a subdirectory in the data directory (`instance-0/`, `instance-1/`, etc.) with its own key file.
+
 ## Building
 
 ```bash
