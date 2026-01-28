@@ -359,7 +359,6 @@ func (s *Service) writeStatsToFile(statsJSON StatsJSON) {
 	}
 }
 
-// formatDuration formats duration in a human-readable way
 func formatDuration(d time.Duration) string {
 	h := d / time.Hour
 	m := (d % time.Hour) / time.Minute
@@ -380,7 +379,6 @@ func (s *Service) GetStats() Stats {
 	return *s.stats
 }
 
-// formatBytes formats bytes as a human-readable string
 func formatBytes(bytes int64) string {
 	const unit = 1024
 	if bytes < unit {
