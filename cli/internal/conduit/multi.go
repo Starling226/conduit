@@ -43,6 +43,12 @@ const (
 	MaxInstances = 32
 	// BytesPerSecondToMbps converts bytes per second to megabits per second
 	BytesPerSecondToMbps = 1000 * 1000 / 8
+	// MaxRestarts is the maximum number of times an instance can restart
+	MaxRestarts = 5
+	// RestartBackoff is the delay between restart attempts
+	RestartBackoff = 5 * time.Second
+	// IdleTimeout is how long an instance can be idle before automatic restart
+	IdleTimeout = 1 * time.Hour
 )
 
 // Compile regexes once at package initialization for performance
@@ -66,12 +72,14 @@ var byteMultipliers = map[string]float64{
 
 // InstanceStats tracks stats for a single instance
 type InstanceStats struct {
-	ID         string
-	IsLive     bool
-	Connecting int
-	Connected  int
-	BytesUp    int64
-	BytesDown  int64
+	ID           string
+	IsLive       bool
+	Connecting   int
+	Connected    int
+	BytesUp      int64
+	BytesDown    int64
+	RestartCount int       // Number of times this instance has been restarted
+	LastZeroTime time.Time // Last time Connected was 0 (for idle timeout detection)
 }
 
 // MultiService manages multiple conduit subprocess instances
@@ -94,6 +102,7 @@ type AggregateStatsJSON struct {
 	ConnectedClients  int            `json:"connectedClients"`
 	TotalBytesUp      int64          `json:"totalBytesUp"`
 	TotalBytesDown    int64          `json:"totalBytesDown"`
+	TotalRestarts     int            `json:"totalRestarts"`
 	UptimeSeconds     int64          `json:"uptimeSeconds"`
 	Timestamp         string         `json:"timestamp"`
 	Instances         []InstanceJSON `json:"instances,omitempty"`
@@ -101,12 +110,13 @@ type AggregateStatsJSON struct {
 
 // InstanceJSON represents per-instance stats in JSON
 type InstanceJSON struct {
-	ID         string `json:"id"`
-	IsLive     bool   `json:"isLive"`
-	Connecting int    `json:"connecting"`
-	Connected  int    `json:"connected"`
-	BytesUp    int64  `json:"bytesUp"`
-	BytesDown  int64  `json:"bytesDown"`
+	ID           string `json:"id"`
+	IsLive       bool   `json:"isLive"`
+	Connecting   int    `json:"connecting"`
+	Connected    int    `json:"connected"`
+	BytesUp      int64  `json:"bytesUp"`
+	BytesDown    int64  `json:"bytesDown"`
+	RestartCount int    `json:"restartCount"`
 }
 
 // NewMultiService creates a multi-instance service that spawns subprocesses
@@ -165,10 +175,37 @@ func (m *MultiService) Run(ctx context.Context) error {
 		wg.Add(1)
 		go func(idx int, dataDir string) {
 			defer wg.Done()
-			if err := m.runInstance(ctx, idx, dataDir, clientsPerInstance, bandwidthPerInstance); err != nil {
-				if ctx.Err() == nil {
-					errChan <- fmt.Errorf("instance-%d: %w", idx, err)
+			restartCount := 0
+
+			for {
+				err := m.runInstance(ctx, idx, dataDir, clientsPerInstance, bandwidthPerInstance)
+
+				// Check if this was a clean shutdown (context cancelled)
+				if ctx.Err() != nil {
+					return
 				}
+
+				// Instance crashed unexpectedly
+				restartCount++
+
+				// Update restart count in stats
+				m.mu.Lock()
+				m.instanceStats[idx].RestartCount = restartCount
+				m.instanceStats[idx].IsLive = false
+				m.mu.Unlock()
+
+				if restartCount >= MaxRestarts {
+					fmt.Printf("[instance-%d] Reached max restarts (%d), giving up\n", idx, MaxRestarts)
+					if err != nil {
+						errChan <- fmt.Errorf("instance-%d exceeded max restarts: %w", idx, err)
+					}
+					return
+				}
+
+				fmt.Printf("[instance-%d] Crashed (restart %d/%d), restarting in %v...\n",
+					idx, restartCount, MaxRestarts, RestartBackoff)
+
+				time.Sleep(RestartBackoff)
 			}
 		}(i, instanceDataDir)
 
@@ -348,7 +385,7 @@ func (m *MultiService) printAndWriteStats() {
 	// Copy data under lock, then release before I/O
 	m.mu.Lock()
 
-	var liveCount, totalConnecting, totalConnected int
+	var liveCount, totalConnecting, totalConnected, totalRestarts int
 	var totalUp, totalDown int64
 
 	instances := make([]InstanceJSON, m.numInstances)
@@ -360,14 +397,32 @@ func (m *MultiService) printAndWriteStats() {
 		totalConnected += stats.Connected
 		totalUp += stats.BytesUp
 		totalDown += stats.BytesDown
+		totalRestarts += stats.RestartCount
 
 		instances[i] = InstanceJSON{
-			ID:         stats.ID,
-			IsLive:     stats.IsLive,
-			Connecting: stats.Connecting,
-			Connected:  stats.Connected,
-			BytesUp:    stats.BytesUp,
-			BytesDown:  stats.BytesDown,
+			ID:           stats.ID,
+			IsLive:       stats.IsLive,
+			Connecting:   stats.Connecting,
+			Connected:    stats.Connected,
+			BytesUp:      stats.BytesUp,
+			BytesDown:    stats.BytesDown,
+			RestartCount: stats.RestartCount,
+		}
+
+		// Check for idle timeout: if instance has been at 0 connections for > 1 hour, restart it
+		if stats.IsLive && stats.Connected == 0 {
+			if stats.LastZeroTime.IsZero() {
+				stats.LastZeroTime = time.Now()
+			} else if time.Since(stats.LastZeroTime) > IdleTimeout {
+				fmt.Printf("[instance-%d] Idle for %v with no connections, restarting...\n",
+					i, time.Since(stats.LastZeroTime).Truncate(time.Second))
+				if m.processes[i] != nil {
+					m.processes[i].Process.Kill()
+				}
+				stats.LastZeroTime = time.Time{} // Reset timer
+			}
+		} else if stats.Connected > 0 {
+			stats.LastZeroTime = time.Time{}
 		}
 	}
 
@@ -379,7 +434,11 @@ func (m *MultiService) printAndWriteStats() {
 	// Lock released - safe to do I/O operations now
 
 	// Print aggregate stats to console
-	fmt.Printf("%s [AGGREGATE] Live: %d/%d | Connecting: %d | Connected: %d | Up: %s | Down: %s | Uptime: %s\n",
+	restartInfo := ""
+	if totalRestarts > 0 {
+		restartInfo = fmt.Sprintf(" | Restarts: %d", totalRestarts)
+	}
+	fmt.Printf("[AGGREGATE] %s Live: %d/%d | Connecting: %d | Connected: %d | Up: %s | Down: %s | Uptime: %s%s\n",
 		time.Now().Format("2006-01-02 15:04:05"),
 		liveCount,
 		m.numInstances,
@@ -388,6 +447,7 @@ func (m *MultiService) printAndWriteStats() {
 		formatBytes(totalUp),
 		formatBytes(totalDown),
 		formatDuration(uptime),
+		restartInfo,
 	)
 
 	// Write stats to file if configured
@@ -399,6 +459,7 @@ func (m *MultiService) printAndWriteStats() {
 			ConnectedClients:  totalConnected,
 			TotalBytesUp:      totalUp,
 			TotalBytesDown:    totalDown,
+			TotalRestarts:     totalRestarts,
 			UptimeSeconds:     int64(uptime.Seconds()),
 			Timestamp:         time.Now().Format(time.RFC3339),
 			Instances:         instances,
