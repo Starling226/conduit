@@ -132,8 +132,13 @@ jobs:
             cli/dist/conduit-freebsd-amd64
             cli/dist/checksums.txt
           body: |
-            ${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' && '## ⚠️ Experimental Release\n\nThis is an experimental release built from PR #' || '## Conduit CLI ' }}${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' && inputs.pr_number || steps.version.outputs.VERSION }}
-            ${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' && '\n**Warning:** This build is for testing purposes only. Use at your own risk.\n\n---\n' || '\nConduit is a volunteer-run proxy node that helps relay traffic for users in censored regions.\n' }}
+            ## ${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' && '⚠️ Experimental Release' || format('Conduit CLI {0}', steps.version.outputs.VERSION) }}
+            
+            ${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' && format('This is an experimental release built from PR #{0}.', inputs.pr_number) || 'Conduit is a volunteer-run proxy node that helps relay traffic for users in censored regions.' }}
+            
+            ${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' && '**Warning:** This build is for testing purposes only. Use at your own risk.' || '' }}
+            
+            ${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' && '---' || '' }}
 
             ### Downloads
 
@@ -167,13 +172,13 @@ jobs:
 
             ```bash
             # Pull from GitHub Container Registry
-            docker pull ghcr.io/${{ github.repository }}/conduit:latest
+            docker pull ghcr.io/${{ github.repository }}/conduit:${{ steps.version.outputs.VERSION }}
 
             # Run with persistent data volume (recommended)
             docker run -d --name conduit \
               -v conduit-data:/home/conduit/data \
               --restart unless-stopped \
-              ghcr.io/${{ github.repository }}/conduit:latest
+              ghcr.io/${{ github.repository }}/conduit:${{ steps.version.outputs.VERSION }}
             ```
 
             **Important:** Always use a persistent volume for the data directory. The Psiphon broker tracks proxy reputation by key - without persistence, you'll start fresh each time.
