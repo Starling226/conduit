@@ -109,22 +109,19 @@ func NewMultiService(cfg *config.Config, numInstances int) (*MultiService, error
 func (m *MultiService) Run(ctx context.Context) error {
 	ctx, m.cancel = context.WithCancel(ctx)
 
-	// Calculate clients per instance
 	clientsPerInstance := m.config.MaxClients / m.numInstances
 	if clientsPerInstance < 1 {
 		clientsPerInstance = 1
 	}
 
-	// Bandwidth per instance (if set)
 	var bandwidthPerInstance float64
 	if m.config.BandwidthBytesPerSecond > 0 {
 		bandwidthPerInstance = float64(m.config.BandwidthBytesPerSecond) / float64(m.numInstances)
 		bandwidthPerInstance = bandwidthPerInstance / 125000 // Convert to Mbps
 	} else {
-		bandwidthPerInstance = -1 // unlimited
+		bandwidthPerInstance = -1
 	}
 
-	// Print startup message
 	bandwidthStr := "unlimited"
 	if bandwidthPerInstance > 0 {
 		bandwidthStr = fmt.Sprintf("%.0f Mbps/instance", bandwidthPerInstance)
@@ -135,11 +132,9 @@ func (m *MultiService) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	errChan := make(chan error, m.numInstances)
 
-	// Start all instances
 	for i := 0; i < m.numInstances; i++ {
 		instanceDataDir := filepath.Join(m.config.DataDir, fmt.Sprintf("instance-%d", i))
 
-		// Create instance data directory
 		if err := os.MkdirAll(instanceDataDir, 0700); err != nil {
 			return fmt.Errorf("failed to create instance directory: %w", err)
 		}
@@ -157,10 +152,8 @@ func (m *MultiService) Run(ctx context.Context) error {
 		fmt.Printf("[instance-%d] Starting with data dir: %s\n", i, instanceDataDir)
 	}
 
-	// Start stats aggregation goroutine
 	go m.aggregateAndPrintStats(ctx)
 
-	// Wait for all instances to complete
 	wg.Wait()
 
 	// Cancel context to trigger final stats write
@@ -171,7 +164,6 @@ func (m *MultiService) Run(ctx context.Context) error {
 
 	fmt.Println("All instances stopped.")
 
-	// Check for errors
 	select {
 	case err := <-errChan:
 		return err
@@ -182,7 +174,6 @@ func (m *MultiService) Run(ctx context.Context) error {
 
 // runInstance spawns and monitors a single conduit subprocess
 func (m *MultiService) runInstance(ctx context.Context, idx int, dataDir string, maxClients int, bandwidthMbps float64) error {
-	// Build command arguments
 	args := []string{"start",
 		"--data-dir", dataDir,
 		"-m", strconv.Itoa(maxClients),
@@ -206,10 +197,8 @@ func (m *MultiService) runInstance(ctx context.Context, idx int, dataDir string,
 		args = append(args, "-v")
 	}
 
-	// Note: we intentionally don't pass --stats-file to children
-	// Parent aggregates stats and writes the combined file
+	// Don't pass --stats-file to children; parent aggregates and writes combined file
 
-	// Get the current executable path
 	executable, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
@@ -218,19 +207,16 @@ func (m *MultiService) runInstance(ctx context.Context, idx int, dataDir string,
 	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.Env = os.Environ()
 
-	// Capture stdout for stats parsing
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
-	// Capture stderr too
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
-	// Start the process
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start instance: %w", err)
 	}
@@ -239,7 +225,6 @@ func (m *MultiService) runInstance(ctx context.Context, idx int, dataDir string,
 	m.processes[idx] = cmd
 	m.mu.Unlock()
 
-	// Forward stderr with prefix
 	go func() {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
@@ -247,7 +232,6 @@ func (m *MultiService) runInstance(ctx context.Context, idx int, dataDir string,
 		}
 	}()
 
-	// Parse stdout for stats and connection status
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -264,29 +248,23 @@ func (m *MultiService) parseInstanceOutput(idx int, line string) {
 
 	stats := m.instanceStats[idx]
 
-	// Check for connection status
 	if strings.Contains(line, "[OK] Connected to Psiphon network") {
 		stats.IsLive = true
 		fmt.Printf("[instance-%d] Connected to Psiphon network\n", idx)
 		return
 	}
 
-	// Parse STATS lines: [STATS] Connecting: N | Connected: N | Up: X | Down: Y | Uptime: Z
 	if strings.Contains(line, "[STATS]") {
 		m.parseStatsLine(stats, line)
-		// Don't forward individual STATS - we aggregate them
 		return
 	}
 
-	// Forward other output with instance prefix (only in verbose mode)
 	if m.config.Verbosity >= 1 {
 		fmt.Printf("[instance-%d] %s\n", idx, line)
 	}
 }
 
-// parseStatsLine extracts stats from a STATS output line
 func (m *MultiService) parseStatsLine(stats *InstanceStats, line string) {
-	// Regex patterns for stats extraction
 	connectingRe := regexp.MustCompile(`Connecting:\s*(\d+)`)
 	connectedRe := regexp.MustCompile(`Connected:\s*(\d+)`)
 	upRe := regexp.MustCompile(`Up:\s*([\d.]+)\s*([KMGTPE]?B)`)
@@ -357,7 +335,6 @@ func (m *MultiService) printAndWriteStats() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Aggregate stats from all instances
 	var liveCount, totalConnecting, totalConnected int
 	var totalUp, totalDown int64
 
@@ -383,7 +360,6 @@ func (m *MultiService) printAndWriteStats() {
 
 	uptime := time.Since(m.startTime).Truncate(time.Second)
 
-	// Print aggregate stats
 	fmt.Printf("%s [AGGREGATE] Live: %d/%d | Connecting: %d | Connected: %d | Up: %s | Down: %s | Uptime: %s\n",
 		time.Now().Format("2006-01-02 15:04:05"),
 		liveCount,
@@ -395,7 +371,6 @@ func (m *MultiService) printAndWriteStats() {
 		FormatDuration(uptime),
 	)
 
-	// Write stats file if configured
 	if m.config.StatsFile != "" {
 		statsJSON := AggregateStatsJSON{
 			LiveInstances:     liveCount,
