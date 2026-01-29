@@ -53,7 +53,7 @@ conduit start --psiphon-config ./psiphon_config.json -vv
 | `--bandwidth, -b` | 5 | Bandwidth limit per peer in Mbps (1-40) |
 | `--data-dir, -d` | `./data` | Directory for keys and state |
 | `--stats-file, -s` | - | Persist stats to JSON file |
-| `--geo` | false | Enable client location tracking (requires tcpdump, geoip-bin) |
+| `--geo` | false | Enable client geolocation tracking |
 | `-v` | - | Verbose output (use `-vv` for debug) |
 
 ## Geo Stats
@@ -61,11 +61,12 @@ conduit start --psiphon-config ./psiphon_config.json -vv
 Track where your clients are connecting from:
 
 ```bash
-# Requires: apt install tcpdump geoip-bin
-sudo conduit start --geo --stats-file
+conduit start --geo --stats-file stats.json --psiphon-config ./psiphon_config.json
 ```
 
-When `--geo` is enabled, the stats.json file includes client locations:
+On first run, the GeoLite2 database (~6MB) is automatically downloaded. Stats are updated in real-time as clients connect and disconnect.
+
+Example `stats.json`:
 
 ```json
 {
@@ -76,14 +77,43 @@ When `--geo` is enabled, the stats.json file includes client locations:
   "uptimeSeconds": 3600,
   "isLive": true,
   "geo": [
-    {"code": "IR", "country": "Iran", "count": 234},
-    {"code": "DE", "country": "Germany", "count": 45}
+    {
+      "code": "IR",
+      "country": "Iran",
+      "count": 3,
+      "count_total": 47,
+      "bytes_up": 524288000,
+      "bytes_down": 2684354560
+    },
+    {
+      "code": "CN",
+      "country": "China",
+      "count": 1,
+      "count_total": 23,
+      "bytes_up": 314572800,
+      "bytes_down": 1610612736
+    },
+    {
+      "code": "RELAY",
+      "country": "Unknown (TURN Relay)",
+      "count": 1,
+      "count_total": 8,
+      "bytes_up": 52428800,
+      "bytes_down": 268435456
+    }
   ],
   "timestamp": "2026-01-25T15:44:00Z"
 }
 ```
 
-Geo stats update every 60 seconds via tcpdump packet capture.
+| Field | Description |
+|-------|-------------|
+| `count` | Currently connected clients |
+| `count_total` | Total unique clients since start |
+| `bytes_up` | Total bytes uploaded since start |
+| `bytes_down` | Total bytes downloaded since start |
+
+Note: Connections through TURN relay servers appear as `RELAY` since the actual client country cannot be determined.
 
 ## Building
 
