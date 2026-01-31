@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/buildinfo"
 	"github.com/prometheus/client_golang/prometheus"
@@ -57,66 +58,6 @@ type Metrics struct {
 type GaugeFuncs struct {
 	GetUptimeSeconds func() float64
 	GetIdleSeconds   func() float64
-}
-
-// build and register a new Prometheus gauge by accepting its options.
-func newGauge(gaugeOpts prometheus.GaugeOpts) prometheus.Gauge {
-	ev := prometheus.NewGauge(gaugeOpts)
-
-	err := prometheus.Register(ev)
-	if err != nil {
-		var are prometheus.AlreadyRegisteredError
-		if ok := errors.As(err, &are); ok {
-			ev, ok = are.ExistingCollector.(prometheus.Gauge)
-			if !ok {
-				panic("different metric type registration")
-			}
-		} else {
-			panic(err)
-		}
-	}
-
-	return ev
-}
-
-// build and register a new Prometheus gauge vector by accepting its options and labels.
-func newGaugeVec(gaugeOpts prometheus.GaugeOpts, labels []string) *prometheus.GaugeVec {
-	ev := prometheus.NewGaugeVec(gaugeOpts, labels)
-
-	err := prometheus.Register(ev)
-	if err != nil {
-		var are prometheus.AlreadyRegisteredError
-		if ok := errors.As(err, &are); ok {
-			ev, ok = are.ExistingCollector.(*prometheus.GaugeVec)
-			if !ok {
-				panic("different metric type registration")
-			}
-		} else {
-			panic(err)
-		}
-	}
-
-	return ev
-}
-
-// build and register a new Prometheus gauge function by accepting its options and function.
-func newGaugeFunc(gaugeOpts prometheus.GaugeOpts, function func() float64) prometheus.GaugeFunc {
-	ev := prometheus.NewGaugeFunc(gaugeOpts, function)
-
-	err := prometheus.Register(ev)
-	if err != nil {
-		var are prometheus.AlreadyRegisteredError
-		if ok := errors.As(err, &are); ok {
-			ev, ok = are.ExistingCollector.(prometheus.GaugeFunc)
-			if !ok {
-				panic("different metric type registration")
-			}
-		} else {
-			panic(err)
-		}
-	}
-
-	return ev
 }
 
 // New creates a new Metrics instance with all metrics registered
@@ -265,7 +206,14 @@ func (m *Metrics) StartServer(addr string) error {
 		EnableOpenMetrics: true,
 	}))
 
-	m.server = &http.Server{Addr: addr, Handler: mux}
+	m.server = &http.Server{
+		Addr:         addr,
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  30 * time.Second,
+		TLSConfig:    nil,
+	}
 
 	// Create a listener to verify the port is available before starting the server
 	listener, err := net.Listen("tcp", addr)
@@ -275,7 +223,7 @@ func (m *Metrics) StartServer(addr string) error {
 
 	// Start server in background with the pre-created listener
 	go func() {
-		if err := m.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+		if err := m.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fmt.Printf("[ERROR] Metrics server error: %v\n", err)
 		}
 	}()
