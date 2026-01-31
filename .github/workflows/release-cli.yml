@@ -152,6 +152,7 @@ jobs:
           path: |
             cli/dist/conduit-linux-amd64
             cli/dist/conduit-linux-arm64
+            cli/dist/conduit-linux-arm
             cli/dist/conduit-darwin-amd64
             cli/dist/conduit-darwin-arm64
             cli/dist/conduit-windows-amd64.exe
@@ -177,6 +178,7 @@ jobs:
           files: |
             cli/dist/conduit-linux-amd64
             cli/dist/conduit-linux-arm64
+            cli/dist/conduit-linux-arm
             cli/dist/conduit-darwin-amd64
             cli/dist/conduit-darwin-arm64
             cli/dist/conduit-windows-amd64.exe
@@ -193,6 +195,7 @@ jobs:
             |----------|--------------|----------|
             | Linux | x86_64 (amd64) | [conduit-linux-amd64](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.TAG_NAME }}/conduit-linux-amd64) |
             | Linux | ARM64 | [conduit-linux-arm64](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.TAG_NAME }}/conduit-linux-arm64) |
+            | Linux | ARMv7 (32-bit) | [conduit-linux-arm](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.TAG_NAME }}/conduit-linux-arm) |
             | macOS | Intel (amd64) | [conduit-darwin-amd64](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.TAG_NAME }}/conduit-darwin-amd64) |
             | macOS | Apple Silicon (arm64) | [conduit-darwin-arm64](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.TAG_NAME }}/conduit-darwin-arm64) |
             | Windows | x86_64 (amd64) | [conduit-windows-amd64.exe](https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.TAG_NAME }}/conduit-windows-amd64.exe) |
@@ -297,7 +300,7 @@ jobs:
         with:
           context: ./cli
           file: ./cli/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}
@@ -308,7 +311,7 @@ jobs:
         with:
           context: ./cli
           file: ./cli/Dockerfile.distroless
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}-distroless

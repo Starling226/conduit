@@ -27,6 +27,7 @@ PSIPHON_REPO := https://github.com/ssmirr/psiphon-tunnel-core.git
 # $(2) = extra build tag (optional, e.g. embed_config)
 # $(3) = GOOS
 # $(4) = GOARCH
+# $(5) = GOARM (optional, for arm 32-bit builds)
 define GO_BUILD
 	@BUILDDATE=$$(date +%Y-%m-%dT%H:%M:%S%z) && \
 	BUILDREPO=$$(cd psiphon-tunnel-core && git config --get remote.origin.url) && \
@@ -34,8 +35,8 @@ define GO_BUILD
 	GOVERSION="$$($(GO) version | sed 's/go version //')" && \
 	ALL_TAGS="$(BASE_TAGS)" && \
 	if [ -n "$(2)" ]; then ALL_TAGS="$$ALL_TAGS,$(2)"; fi && \
-	echo "Building $(3)/$(4) -> $(1) with tags: $$ALL_TAGS" && \
-	CGO_ENABLED=0 GOOS=$(3) GOARCH=$(4) $(GO) build \
+	echo "Building $(3)/$(4)$(if $(5),v$(5),) -> $(1) with tags: $$ALL_TAGS" && \
+	CGO_ENABLED=0 GOOS=$(3) GOARCH=$(4) $(if $(5),GOARM=$(5),) $(GO) build \
 	  -tags "$$ALL_TAGS" \
 	  -ldflags "\
 	    -s -w \
@@ -116,6 +117,9 @@ build-linux: check-go check-setup
 build-linux-arm: check-go check-setup
 	$(call GO_BUILD,dist/conduit-linux-arm64,,linux,arm64)
 
+build-linux-arm32: check-go check-setup
+	$(call GO_BUILD,dist/conduit-linux-arm,,linux,arm,7)
+
 build-darwin: check-go check-setup
 	$(call GO_BUILD,dist/conduit-darwin-amd64,,darwin,amd64)
 
@@ -129,7 +133,7 @@ build-freebsd: check-go check-setup
 	$(call GO_BUILD,dist/conduit-freebsd-amd64,,freebsd,amd64)
 
 # Build for all platforms
-build-all: check-go check-setup build-linux build-linux-arm build-darwin build-darwin-arm build-windows build-freebsd
+build-all: check-go check-setup build-linux build-linux-arm build-linux-arm32 build-darwin build-darwin-arm build-windows build-freebsd
 
 # Build for all platforms with embedded config
 build-all-embedded: check-go check-setup check-psiphon-config
@@ -137,6 +141,7 @@ build-all-embedded: check-go check-setup check-psiphon-config
 	@cp "$(PSIPHON_CONFIG)" internal/config/psiphon_config.json
 	$(call GO_BUILD,dist/conduit-linux-amd64,$(EMBED_TAG),linux,amd64)
 	$(call GO_BUILD,dist/conduit-linux-arm64,$(EMBED_TAG),linux,arm64)
+	$(call GO_BUILD,dist/conduit-linux-arm,$(EMBED_TAG),linux,arm,7)
 	$(call GO_BUILD,dist/conduit-darwin-amd64,$(EMBED_TAG),darwin,amd64)
 	$(call GO_BUILD,dist/conduit-darwin-arm64,$(EMBED_TAG),darwin,arm64)
 	$(call GO_BUILD,dist/conduit-windows-amd64.exe,$(EMBED_TAG),windows,amd64)
@@ -189,6 +194,7 @@ docker: check-psiphon-config
 	@cp "$(PSIPHON_CONFIG)" internal/config/psiphon_config.json
 	$(call GO_BUILD,dist/conduit-linux-amd64,$(EMBED_TAG),linux,amd64)
 	$(call GO_BUILD,dist/conduit-linux-arm64,$(EMBED_TAG),linux,arm64)
+	$(call GO_BUILD,dist/conduit-linux-arm,$(EMBED_TAG),linux,arm,7)
 	@rm -f internal/config/psiphon_config.json
 	@echo "Building Debian Docker image..."
 	docker build -t $(DOCKER_IMAGE):latest -f Dockerfile .
@@ -202,6 +208,7 @@ docker-distroless: check-psiphon-config
 	@cp "$(PSIPHON_CONFIG)" internal/config/psiphon_config.json
 	$(call GO_BUILD,dist/conduit-linux-amd64,$(EMBED_TAG),linux,amd64)
 	$(call GO_BUILD,dist/conduit-linux-arm64,$(EMBED_TAG),linux,arm64)
+	$(call GO_BUILD,dist/conduit-linux-arm,$(EMBED_TAG),linux,arm,7)
 	@rm -f internal/config/psiphon_config.json
 	@echo "Building Distroless Docker image..."
 	docker build -t $(DOCKER_IMAGE):distroless -f Dockerfile.distroless .
