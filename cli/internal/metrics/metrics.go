@@ -22,9 +22,11 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/buildinfo"
 	"github.com/prometheus/client_golang/prometheus"
@@ -67,58 +69,66 @@ func New(gaugeFuncs GaugeFuncs) *Metrics {
 	registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
 	m := &Metrics{
-		ConnectingClients: prometheus.NewGauge(
+		ConnectingClients: newGauge(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
+				Subsystem: "proxy",
 				Name:      "connecting_clients",
 				Help:      "Number of clients currently connecting to the proxy",
 			},
 		),
-		ConnectedClients: prometheus.NewGauge(
+		ConnectedClients: newGauge(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
+				Subsystem: "proxy",
 				Name:      "connected_clients",
 				Help:      "Number of clients currently connected to the proxy",
 			},
 		),
-		IsLive: prometheus.NewGauge(
+		IsLive: newGauge(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
+				Subsystem: "service",
 				Name:      "is_live",
 				Help:      "Whether the service is connected to the Psiphon broker (1 = connected, 0 = disconnected)",
 			},
 		),
-		MaxClients: prometheus.NewGauge(
+		MaxClients: newGauge(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
+				Subsystem: "service",
 				Name:      "max_clients",
 				Help:      "Maximum number of proxy clients allowed",
 			},
 		),
-		BandwidthLimit: prometheus.NewGauge(
+		BandwidthLimit: newGauge(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
+				Subsystem: "proxy",
 				Name:      "bandwidth_limit_bytes_per_second",
 				Help:      "Configured bandwidth limit in bytes per second (0 = unlimited)",
 			},
 		),
-		BytesUploaded: prometheus.NewGauge(
+		BytesUploaded: newGauge(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
+				Subsystem: "proxy",
 				Name:      "bytes_uploaded",
 				Help:      "Total number of bytes uploaded through the proxy",
 			},
 		),
-		BytesDownloaded: prometheus.NewGauge(
+		BytesDownloaded: newGauge(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
+				Subsystem: "proxy",
 				Name:      "bytes_downloaded",
 				Help:      "Total number of bytes downloaded through the proxy",
 			},
 		),
-		BuildInfo: prometheus.NewGaugeVec(
+		BuildInfo: newGaugeVec(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
+				Subsystem: "service",
 				Name:      "build_info",
 				Help:      "Build information about the Conduit service",
 			},
@@ -128,37 +138,26 @@ func New(gaugeFuncs GaugeFuncs) *Metrics {
 	}
 
 	// Create GaugeFunc metrics (computed at scrape time)
-	uptimeSeconds := prometheus.NewGaugeFunc(
+	newGaugeFunc(
 		prometheus.GaugeOpts{
 			Namespace: namespace,
+			Subsystem: "service",
 			Name:      "uptime_seconds",
 			Help:      "Number of seconds since the service started",
 		},
 		gaugeFuncs.GetUptimeSeconds,
 	)
-	idleSeconds := prometheus.NewGaugeFunc(
+	newGaugeFunc(
 		prometheus.GaugeOpts{
 			Namespace: namespace,
+			Subsystem: "proxy",
 			Name:      "idle_seconds",
 			Help:      "Number of seconds the proxy has been idle (0 connecting and 0 connected clients)",
 		},
 		gaugeFuncs.GetIdleSeconds,
 	)
 
-	// Register all metrics
-	registry.MustRegister(m.ConnectingClients)
-	registry.MustRegister(m.ConnectedClients)
-	registry.MustRegister(m.IsLive)
-	registry.MustRegister(m.MaxClients)
-	registry.MustRegister(m.BandwidthLimit)
-	registry.MustRegister(uptimeSeconds)
-	registry.MustRegister(idleSeconds)
-	registry.MustRegister(m.BytesUploaded)
-	registry.MustRegister(m.BytesDownloaded)
-	registry.MustRegister(m.BuildInfo)
-
 	// Set build info
-
 	buildInfo := buildinfo.GetBuildInfo()
 	m.BuildInfo.WithLabelValues(buildInfo.BuildRepo, buildInfo.BuildRev, buildInfo.GoVersion, buildInfo.ValuesRev).Set(1)
 
@@ -207,7 +206,14 @@ func (m *Metrics) StartServer(addr string) error {
 		EnableOpenMetrics: true,
 	}))
 
-	m.server = &http.Server{Addr: addr, Handler: mux}
+	m.server = &http.Server{
+		Addr:         addr,
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  30 * time.Second,
+		TLSConfig:    nil,
+	}
 
 	// Create a listener to verify the port is available before starting the server
 	listener, err := net.Listen("tcp", addr)
@@ -217,7 +223,7 @@ func (m *Metrics) StartServer(addr string) error {
 
 	// Start server in background with the pre-created listener
 	go func() {
-		if err := m.server.Serve(listener); err != nil && err != http.ErrServerClosed {
+		if err := m.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fmt.Printf("[ERROR] Metrics server error: %v\n", err)
 		}
 	}()
