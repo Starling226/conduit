@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/Psiphon-Inc/conduit/cli/internal/crypto"
 )
@@ -53,6 +54,7 @@ type Options struct {
 	StatsFile         string // Path to write stats JSON file (empty = disabled)
 	GeoEnabled        bool   // Enable geo tracking via tcpdump
 	MetricsAddr       string // Address for Prometheus metrics endpoint (empty = disabled)
+	IdleRestart       time.Duration
 }
 
 // Config represents the validated configuration for the Conduit service
@@ -68,6 +70,7 @@ type Config struct {
 	StatsFile               string // Path to write stats JSON file (empty = disabled)
 	GeoEnabled              bool   // Enable geo tracking via tcpdump
 	MetricsAddr             string // Address for Prometheus metrics endpoint (empty = disabled)
+	IdleRestart             time.Duration
 }
 
 // persistedKey represents the key data saved to disk
@@ -181,6 +184,7 @@ func LoadOrCreate(opts Options) (*Config, error) {
 		StatsFile:               opts.StatsFile,
 		GeoEnabled:              opts.GeoEnabled,
 		MetricsAddr:             opts.MetricsAddr,
+		IdleRestart:             opts.IdleRestart,
 	}, nil
 }
 

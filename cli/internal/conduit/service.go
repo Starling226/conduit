@@ -23,6 +23,7 @@ package conduit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -35,6 +36,9 @@ import (
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon"
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon/common/inproxy"
 )
+
+// ErrIdleRestart is returned when the service should restart due to idle timeout
+var ErrIdleRestart = errors.New("idle restart triggered")
 
 // Service represents the Conduit inproxy service
 type Service struct {
@@ -91,6 +95,7 @@ func New(cfg *config.Config) (*Service, error) {
 }
 
 // Run starts the Conduit inproxy service and blocks until context is cancelled
+// Returns ErrIdleRestart if the service should be restarted due to idle timeout
 func (s *Service) Run(ctx context.Context) error {
 	if s.config.GeoEnabled {
 		dbPath := s.config.DataDir + "/GeoLite2-Country.mmdb"
@@ -155,6 +160,11 @@ func (s *Service) Run(ctx context.Context) error {
 	s.controller, err = psiphon.NewController(psiphonConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create controller: %w", err)
+	}
+
+	// If idle restart is enabled, run the controller with idle monitoring
+	if s.config.IdleRestart > 0 {
+		return s.runWithIdleMonitoring(ctx)
 	}
 
 	// Run the controller (blocks until context is cancelled)
@@ -533,4 +543,49 @@ func formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// runWithIdleMonitoring runs the controller with idle time monitoring.
+// Returns ErrIdleRestart if idle timeout is reached, nil if context is cancelled.
+func (s *Service) runWithIdleMonitoring(ctx context.Context) error {
+	// Create a cancellable context for the controller
+	controllerCtx, cancelController := context.WithCancel(ctx)
+	defer cancelController()
+
+	// Channel to signal controller completion
+	controllerDone := make(chan struct{})
+
+	// Run controller in goroutine
+	go func() {
+		s.controller.Run(controllerCtx)
+		close(controllerDone)
+	}()
+
+	// Check idle time periodically
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			// Parent context cancelled (user shutdown)
+			cancelController()
+			<-controllerDone
+			return nil
+
+		case <-controllerDone:
+			// Controller exited on its own
+			return nil
+
+		case <-ticker.C:
+			idleSeconds := s.getIdleSecondsFloat()
+			if idleSeconds >= s.config.IdleRestart.Seconds() {
+				fmt.Printf("\n[IDLE] No activity for %s, restarting to refresh connections...\n",
+					formatDuration(time.Duration(idleSeconds)*time.Second))
+				cancelController()
+				<-controllerDone
+				return ErrIdleRestart
+			}
+		}
+	}
 }

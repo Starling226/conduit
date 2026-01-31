@@ -21,11 +21,13 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/Psiphon-Inc/conduit/cli/internal/conduit"
 	"github.com/Psiphon-Inc/conduit/cli/internal/config"
@@ -39,6 +41,7 @@ var (
 	statsFilePath     string
 	geoEnabled        bool
 	metricsAddr       string
+	idleRestart       string
 )
 
 var startCmd = &cobra.Command{
@@ -68,6 +71,7 @@ func init() {
 	startCmd.Flags().BoolVar(&geoEnabled, "geo", false, "enable client location tracking (requires tcpdump, geoip-bin)")
 	startCmd.Flags().StringVar(&metricsAddr, "metrics-addr", "", "address for Prometheus metrics endpoint (e.g., :9090 or 127.0.0.1:9090)")
 	startCmd.Flags().StringVarP(&psiphonConfigPath, "psiphon-config", "c", "", "path to Psiphon network config file (JSON)")
+	startCmd.Flags().StringVar(&idleRestart, "idle-restart", "", "restart service after idle duration (e.g., 30m, 1h, 2h)")
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
@@ -112,6 +116,19 @@ func runStart(cmd *cobra.Command, args []string) error {
 		bandwidthFromFlagSet = true
 	}
 
+	// Parse idle-restart duration if provided
+	var idleRestartDuration time.Duration
+	if idleRestart != "" {
+		d, err := time.ParseDuration(idleRestart)
+		if err != nil {
+			return fmt.Errorf("invalid idle-restart duration %q: %w (use format like 30m, 1h, 2h)", idleRestart, err)
+		}
+		if d < 30*time.Minute {
+			return fmt.Errorf("idle-restart must be at least 30m")
+		}
+		idleRestartDuration = d
+	}
+
 	// Load or create configuration (auto-generates keys on first run)
 	cfg, err := config.LoadOrCreate(config.Options{
 		DataDir:           GetDataDir(),
@@ -124,15 +141,10 @@ func runStart(cmd *cobra.Command, args []string) error {
 		StatsFile:         resolvedStatsFile,
 		GeoEnabled:        geoEnabled,
 		MetricsAddr:       metricsAddr,
+		IdleRestart:       idleRestartDuration,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
-	}
-
-	// Create conduit service
-	service, err := conduit.New(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to create conduit service: %w", err)
 	}
 
 	// Setup context with cancellation
@@ -149,9 +161,35 @@ func runStart(cmd *cobra.Command, args []string) error {
 		cancel()
 	}()
 
-	// Run the service
-	if err := service.Run(ctx); err != nil && ctx.Err() == nil {
-		return fmt.Errorf("conduit service error: %w", err)
+	// Run the service (with restart loop if idle-restart is enabled)
+	for {
+		// Create conduit service
+		service, err := conduit.New(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to create conduit service: %w", err)
+		}
+
+		// Run the service
+		err = service.Run(ctx)
+
+		// Check if we should restart due to idle timeout
+		if errors.Is(err, conduit.ErrIdleRestart) {
+			// Brief pause before restarting
+			select {
+			case <-ctx.Done():
+				fmt.Println("Stopped.")
+				return nil
+			case <-time.After(5 * time.Second):
+				// Continue to restart
+			}
+			continue
+		}
+
+		// Any other error or normal shutdown
+		if err != nil && ctx.Err() == nil {
+			return fmt.Errorf("conduit service error: %w", err)
+		}
+		break
 	}
 
 	fmt.Println("Stopped.")
