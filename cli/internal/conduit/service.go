@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/Psiphon-Inc/conduit/cli/internal/config"
+	"github.com/Psiphon-Inc/conduit/cli/internal/filter"
 	"github.com/Psiphon-Inc/conduit/cli/internal/geo"
 	"github.com/Psiphon-Inc/conduit/cli/internal/metrics"
 	"github.com/Psiphon-Labs/psiphon-tunnel-core/psiphon"
@@ -42,12 +43,13 @@ var ErrIdleRestart = errors.New("idle restart triggered")
 
 // Service represents the Conduit inproxy service
 type Service struct {
-	config       *config.Config
-	controller   *psiphon.Controller
-	stats        *Stats
-	geoCollector *geo.Collector
-	metrics      *metrics.Metrics
-	mu           sync.RWMutex
+	config        *config.Config
+	controller    *psiphon.Controller
+	stats         *Stats
+	geoCollector  *geo.Collector
+	countryFilter *filter.CountryFilter
+	metrics       *metrics.Metrics
+	mu            sync.RWMutex
 }
 
 // Stats tracks proxy activity statistics
@@ -106,6 +108,20 @@ func (s *Service) Run(ctx context.Context) error {
 		} else {
 			fmt.Println("[GEO] Tracking enabled")
 		}
+	}
+
+	// Initialize country filter if configured
+	if len(s.config.AllowedCountries) > 0 {
+		dbPath := s.config.DataDir + "/GeoLite2-Country.mmdb"
+		if err := geo.EnsureDatabase(dbPath); err != nil {
+			return fmt.Errorf("failed to ensure GeoIP database for filter: %w", err)
+		}
+		cf, err := filter.NewCountryFilter(dbPath, s.config.AllowedCountries)
+		if err != nil {
+			return fmt.Errorf("failed to create country filter: %w", err)
+		}
+		s.countryFilter = cf
+		fmt.Printf("[FILTER] Only allowing connections from: %v\n", s.config.AllowedCountries)
 	}
 
 	if s.metrics != nil && s.config.MetricsAddr != "" {
@@ -243,26 +259,58 @@ func (s *Service) createPsiphonConfig() (*psiphon.Config, error) {
 		return nil, fmt.Errorf("failed to commit config: %w", err)
 	}
 
-	// Set up geo tracking callback if enabled
-	if s.geoCollector != nil {
+	// Set up connection callbacks for filtering and/or geo tracking
+	if s.countryFilter != nil || s.geoCollector != nil {
 		psiphonConfig.OnInproxyConnectionEstablished = func(local, remote inproxy.ConnectionStats) {
 			if remote.IP == "" {
 				return
 			}
-			if remote.CandidateType == "relay" {
-				s.geoCollector.ConnectRelay(remote.IP)
-			} else {
-				s.geoCollector.ConnectIP(remote.IP)
+
+			// Check country filter first (if enabled)
+			if s.countryFilter != nil {
+				allowed, countryCode, isRelay := s.countryFilter.IsAllowed(remote.IP)
+				if !allowed {
+					if s.config.Verbosity >= 1 {
+						fmt.Printf("[BLOCKED] Connection from %s (%s)\n", remote.IP, countryCode)
+					}
+					return
+				}
+				if s.config.Verbosity >= 2 {
+					if isRelay {
+						fmt.Printf("[ALLOWED] Relay connection from %s\n", remote.IP)
+					} else {
+						fmt.Printf("[ALLOWED] Connection from %s (%s)\n", remote.IP, countryCode)
+					}
+				}
+			}
+
+			// Geo tracking (if enabled)
+			if s.geoCollector != nil {
+				if remote.CandidateType == "relay" {
+					s.geoCollector.ConnectRelay(remote.IP)
+				} else {
+					s.geoCollector.ConnectIP(remote.IP)
+				}
 			}
 		}
 		psiphonConfig.OnInproxyConnectionClosed = func(remote *inproxy.ConnectionStats, bw *inproxy.BandwidthStats) {
 			if remote == nil || remote.IP == "" || bw == nil {
 				return
 			}
-			if remote.CandidateType == "relay" {
-				s.geoCollector.DisconnectRelay(remote.IP, bw.BytesUp, bw.BytesDown)
-			} else {
-				s.geoCollector.DisconnectIP(remote.IP, bw.BytesUp, bw.BytesDown)
+			// Only track geo for connections that passed the filter
+			if s.geoCollector != nil {
+				if s.countryFilter != nil {
+					// Re-check filter to ensure we only track allowed connections
+					allowed, _, _ := s.countryFilter.IsAllowed(remote.IP)
+					if !allowed {
+						return
+					}
+				}
+				if remote.CandidateType == "relay" {
+					s.geoCollector.DisconnectRelay(remote.IP, bw.BytesUp, bw.BytesDown)
+				} else {
+					s.geoCollector.DisconnectIP(remote.IP, bw.BytesUp, bw.BytesDown)
+				}
 			}
 		}
 	}

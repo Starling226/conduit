@@ -55,6 +55,7 @@ type Options struct {
 	GeoEnabled        bool   // Enable geo tracking via tcpdump
 	MetricsAddr       string // Address for Prometheus metrics endpoint (empty = disabled)
 	IdleRestart       time.Duration
+	AllowedCountries  []string
 }
 
 // Config represents the validated configuration for the Conduit service
@@ -71,6 +72,7 @@ type Config struct {
 	GeoEnabled              bool   // Enable geo tracking via tcpdump
 	MetricsAddr             string // Address for Prometheus metrics endpoint (empty = disabled)
 	IdleRestart             time.Duration
+	AllowedCountries        []string
 }
 
 // persistedKey represents the key data saved to disk
@@ -185,6 +187,7 @@ func LoadOrCreate(opts Options) (*Config, error) {
 		GeoEnabled:              opts.GeoEnabled,
 		MetricsAddr:             opts.MetricsAddr,
 		IdleRestart:             opts.IdleRestart,
+		AllowedCountries:        opts.AllowedCountries,
 	}, nil
 }
 
@@ -277,5 +280,4 @@ func LoadKey(dataDir string) (*crypto.KeyPair, string, error) {
 
 	keyPair, err := crypto.ParsePrivateKey(privateKeyBytes)
 	return keyPair, pk.PrivateKeyBase64, err
-
 }
