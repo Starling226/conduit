@@ -280,6 +280,23 @@ func (s *Service) updateMetrics() {
 	s.metrics.SetConnectedClients(s.stats.ConnectedClients)
 	s.metrics.SetBytesUploaded(float64(s.stats.TotalBytesUp))
 	s.metrics.SetBytesDownloaded(float64(s.stats.TotalBytesDown))
+
+	// Update geo metrics if geo tracking is enabled
+	if s.geoCollector != nil {
+		geoResults := s.geoCollector.GetResults()
+		metricsResults := make([]metrics.GeoResult, len(geoResults))
+		for i, r := range geoResults {
+			metricsResults[i] = metrics.GeoResult{
+				Code:       r.Code,
+				Country:    r.Country,
+				Count:      r.Count,
+				CountTotal: r.CountTotal,
+				BytesUp:    r.BytesUp,
+				BytesDown:  r.BytesDown,
+			}
+		}
+		s.metrics.UpdateGeo(metricsResults)
+	}
 }
 
 // getUptimeSeconds returns the uptime in seconds (thread-safe, for Prometheus scrape)
