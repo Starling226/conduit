@@ -10,6 +10,8 @@ Our official CLI releases include an embedded psiphon config.
 
 Contact Psiphon (conduit-oss@psiphon.ca) to discuss custom configuration values.
 
+Conduit deployment guide: [GUIDE.md](./GUIDE.md)
+
 ## Docker
 
 Use the official Docker image, which includes an embedded Psiphon config. Docker Compose is a convenient way to run Conduit if you prefer a declarative setup.
@@ -92,16 +94,16 @@ Contact Psiphon (conduit-oss@psiphon.ca) to obtain valid configuration values.
 
 ```bash
 # Start with default settings
-conduit start --psiphon-config ./psiphon_config.json
+conduit start
 
 # Customize limits
-conduit start --psiphon-config ./psiphon_config.json --max-clients 500 --bandwidth 10
+conduit start --max-clients 500 --bandwidth 10
 
 # Enable Prometheus metrics
-conduit start --psiphon-config ./psiphon_config.json --metrics-addr :9090
+conduit start --metrics-addr :9090
 
 # Verbose output (info messages)
-conduit start --psiphon-config ./psiphon_config.json -v
+conduit start -v
 
 # Debug output (everything)
 conduit start --psiphon-config ./psiphon_config.json -vv
@@ -109,16 +111,52 @@ conduit start --psiphon-config ./psiphon_config.json -vv
 
 ### Options
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--psiphon-config, -c` | - | Path to Psiphon network configuration file |
-| `--max-clients, -m` | 50 | Maximum concurrent clients |
-| `--bandwidth, -b` | 40 | Bandwidth limit per peer in Mbps (-1 for unlimited) |
-| `--data-dir, -d` | `./data` | Directory for keys and state |
-| `--stats-file, -s` | - | Persist stats to JSON file |
-| `--metrics-addr` | - | Prometheus metrics listen address (e.g., :9090) |
-| `--geo` | false | Enable client geolocation tracking |
-| `-v` | - | Verbose output (use `-vv` for debug) |
+| Flag                   | Default  | Description                                          |
+| ---------------------- | -------- | ---------------------------------------------------- |
+| `--psiphon-config, -c` | -        | Path to Psiphon network configuration file           |
+| `--max-clients, -m`    | 50       | Maximum concurrent clients                           |
+| `--bandwidth, -b`      | 40       | Bandwidth limit per peer in Mbps (-1 for unlimited)  |
+| `--data-dir, -d`       | `./data` | Directory for keys and state                         |
+| `--stats-file, -s`     | -        | Persist stats to JSON file                           |
+| `--metrics-addr`       | -        | Prometheus metrics listen address (e.g., :9090)      |
+| `--geo`                | false    | Enable client geolocation tracking                   |
+| `-v`                   | -        | Verbose output (use `-vv` for debug)                 |
+
+## Traffic Throttling
+
+For bandwidth-constrained environments (e.g., VPS with monthly quotas), Conduit supports automatic throttling via a separate supervisor monitor.
+
+To use traffic throttling with Docker, use the `limited-bandwidth` compose file:
+
+```bash
+docker compose -f docker-compose.limited-bandwidth.yml up -d
+```
+
+### Configuration
+
+Edit `docker-compose.limited-bandwidth.yml` to set your limits:
+
+```yaml
+command:
+    [
+        "--traffic-limit", "500",       # Total quota in GB
+        "--traffic-period", "30",       # Time period in days
+        "--bandwidth-threshold", "80",  # Throttle at 80% usage
+        "--min-connections", "10",      # Reduced capacity when throttled
+        "--min-bandwidth", "10",        # Reduced bandwidth when throttled
+        "--",                           # Separator
+        "start",                        # Conduit command
+        ...                             # Conduit flags
+    ]
+```
+
+### How It Works
+
+The supervisor monitors bandwidth usage and:
+1. Runs Conduit at full capacity initially.
+2. When the threshold is reached (e.g., 400GB of 500GB), it restarts Conduit with reduced capacity.
+3. When the period ends, it resets usage and restarts Conduit at full capacity.
+4. Ensures minimum limits (100GB/7days) to protect reputation.
 
 ## Geo Stats
 
@@ -182,11 +220,15 @@ Example `stats.json`:
 - The `connectedClients` field is reported by the Psiphon broker and may differ slightly from the sum of geo `count` values, which are tracked locally via WebRTC callbacks.
 - Bandwidth (`bytes_up`/`bytes_down`) is attributed to a country when the connection closes. Active connections contribute to `totalBytesUp`/`totalBytesDown` but won't appear in geo stats until they disconnect.
 
+- `traffic_state.json` - Traffic usage tracking (when throttling is enabled)
+  Tracks current period start time, bytes used, and throttle state. Persists across restarts.
+
 ## Building
 
 ```bash
 # Build for current platform
 make build
+make build-monitor
 
 # Build with embedded config (single-binary distribution)
 make build-embedded PSIPHON_CONFIG=./psiphon_config.json

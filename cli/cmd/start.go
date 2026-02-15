@@ -31,6 +31,7 @@ import (
 
 	"github.com/Psiphon-Inc/conduit/cli/internal/conduit"
 	"github.com/Psiphon-Inc/conduit/cli/internal/config"
+	"github.com/Psiphon-Inc/conduit/cli/internal/logging"
 	"github.com/spf13/cobra"
 )
 
@@ -42,6 +43,7 @@ var (
 	geoEnabled        bool
 	metricsAddr       string
 	idleRestart       string
+	compartment       string
 )
 
 var startCmd = &cobra.Command{
@@ -72,6 +74,7 @@ func init() {
 	startCmd.Flags().StringVar(&metricsAddr, "metrics-addr", "", "address for Prometheus metrics endpoint (e.g., :9090 or 127.0.0.1:9090)")
 	startCmd.Flags().StringVarP(&psiphonConfigPath, "psiphon-config", "c", "", "path to Psiphon network config file (JSON)")
 	startCmd.Flags().StringVar(&idleRestart, "idle-restart", "", "restart service after idle duration (e.g., 30m, 1h, 2h)")
+	startCmd.Flags().StringVar(&compartment, "compartment", "", "compartment name for private conduit pairing (clients must use the same name)")
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
@@ -142,6 +145,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		GeoEnabled:        geoEnabled,
 		MetricsAddr:       metricsAddr,
 		IdleRestart:       idleRestartDuration,
+		Compartment:       compartment,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
@@ -157,7 +161,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	go func() {
 		<-sigChan
-		fmt.Println("\nShutting down...")
+		logging.Println("Shutting down...")
 		cancel()
 	}()
 
@@ -192,6 +196,6 @@ func runStart(cmd *cobra.Command, args []string) error {
 		break
 	}
 
-	fmt.Println("Stopped.")
+	logging.Println("Stopped.")
 	return nil
 }

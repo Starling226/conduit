@@ -212,7 +212,7 @@ func (c *Collector) autoUpdate(ctx context.Context) {
 			}
 			c.mu.Lock()
 			if c.db != nil {
-				c.db.Close()
+				_ = c.db.Close()
 			}
 			db, err := geoip2.Open(c.dbPath)
 			if err == nil {

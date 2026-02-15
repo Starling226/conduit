@@ -21,6 +21,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -29,6 +30,7 @@ import (
 	"time"
 
 	"github.com/Psiphon-Inc/conduit/cli/internal/crypto"
+	"github.com/Psiphon-Inc/conduit/cli/internal/logging"
 )
 
 // Default values for CLI usage
@@ -50,11 +52,12 @@ type Options struct {
 	MaxClients        int
 	BandwidthMbps     float64
 	BandwidthSet      bool
-	Verbosity         int    // 0=normal, 1=verbose, 2+=debug
+	Verbosity         int    // 0=normal, 1+=verbose
 	StatsFile         string // Path to write stats JSON file (empty = disabled)
 	GeoEnabled        bool   // Enable geo tracking via tcpdump
 	MetricsAddr       string // Address for Prometheus metrics endpoint (empty = disabled)
 	IdleRestart       time.Duration
+	Compartment       string // Human-readable compartment name for private pairing
 }
 
 // Config represents the validated configuration for the Conduit service
@@ -63,10 +66,11 @@ type Config struct {
 	PrivateKeyBase64        string
 	MaxClients              int
 	BandwidthBytesPerSecond int
+	CompartmentID           string // Base64-encoded personal compartment ID for private pairing
 	DataDir                 string
 	PsiphonConfigPath       string
 	PsiphonConfigData       []byte // Embedded config data (if used)
-	Verbosity               int    // 0=normal, 1=verbose, 2+=debug
+	Verbosity               int    // 0=normal, 1+=verbose
 	StatsFile               string // Path to write stats JSON file (empty = disabled)
 	GeoEnabled              bool   // Enable geo tracking via tcpdump
 	MetricsAddr             string // Address for Prometheus metrics endpoint (empty = disabled)
@@ -172,11 +176,19 @@ func LoadOrCreate(opts Options) (*Config, error) {
 		}
 	}
 
+	// Derive compartment ID from human-readable name using SHA-256
+	var compartmentID string
+	if opts.Compartment != "" {
+		hash := sha256.Sum256([]byte(opts.Compartment))
+		compartmentID = base64.RawStdEncoding.EncodeToString(hash[:])
+	}
+
 	return &Config{
 		KeyPair:                 keyPair,
 		PrivateKeyBase64:        privateKeyBase64,
 		MaxClients:              maxClients,
 		BandwidthBytesPerSecond: bandwidthBytesPerSecond,
+		CompartmentID:           compartmentID,
 		DataDir:                 opts.DataDir,
 		PsiphonConfigPath:       opts.PsiphonConfigPath,
 		PsiphonConfigData:       psiphonConfigData,
@@ -205,7 +217,7 @@ func loadOrCreateKey(dataDir string, verbose bool) (*crypto.KeyPair, string, err
 				keyPair, err := crypto.ParsePrivateKey(privateKeyBytes)
 				if err == nil {
 					if verbose {
-						fmt.Println("Loaded existing key from", keyPath)
+						logging.Println("Loaded existing key from", keyPath)
 					}
 					return keyPair, pk.PrivateKeyBase64, nil
 				}
@@ -244,7 +256,7 @@ func loadOrCreateKey(dataDir string, verbose bool) (*crypto.KeyPair, string, err
 	}
 
 	if verbose {
-		fmt.Printf("New keys saved to %s\n", keyPath)
+		logging.Printf("New keys saved to %s\n", keyPath)
 	}
 
 	return keyPair, privateKeyBase64, nil

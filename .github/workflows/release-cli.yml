@@ -31,10 +31,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Go 1.24.3
+      - name: Set up Go 1.24.12
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24.3"
+          go-version: "1.24.12"
 
       - name: Verify Go version
         run: go version
@@ -61,10 +61,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Go 1.24.3
+      - name: Set up Go 1.24.12
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24.3"
+          go-version: "1.24.12"
 
       - name: Verify Go version
         run: go version
@@ -80,6 +80,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    environment: release-cli
     needs: [test, lint]
     permissions:
       contents: write
@@ -117,10 +118,10 @@ jobs:
             echo "IS_EXPERIMENTAL=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Set up Go 1.24.3
+      - name: Set up Go 1.24.12
         uses: actions/setup-go@v5
         with:
-          go-version: "1.24.3"
+          go-version: "1.24.12"
 
       - name: Verify Go version
         run: go version
@@ -153,6 +154,9 @@ jobs:
             cli/dist/conduit-linux-amd64
             cli/dist/conduit-linux-arm64
             cli/dist/conduit-linux-arm
+            cli/dist/conduit-monitor-linux-amd64
+            cli/dist/conduit-monitor-linux-arm64
+            cli/dist/conduit-monitor-linux-arm
             cli/dist/conduit-darwin-amd64
             cli/dist/conduit-darwin-arm64
             cli/dist/conduit-windows-amd64.exe
@@ -188,6 +192,12 @@ jobs:
             ## ${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' && '⚠️ Experimental Release' || format('Conduit CLI {0}', steps.version.outputs.VERSION) }}
 
             ${{ steps.version.outputs.IS_EXPERIMENTAL == 'true' && format('This is an experimental release built from PR #{0}. **Warning:** This build is for testing purposes only.', inputs.pr_number) || 'Conduit is a volunteer-run proxy node that helps relay traffic for users in censored regions.' }}
+
+            This release is also available through a docker image, which also embeds a configuration file.
+
+            ```bash
+            docker pull ghcr.io/${{ github.repository }}/conduit:latest
+            ```
 
             ### Downloads
 
